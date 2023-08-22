@@ -1,5 +1,10 @@
 use std::sync::{atomic::{AtomicUsize, Ordering}, Mutex};
 
+pub enum Status {
+    Empty,
+    Abort,
+}
+
 pub trait Task {
     fn execute(&self);
 }
@@ -38,20 +43,32 @@ where
         buffer.push(Some(task));
     }
 
-    pub fn pop(&mut self) -> Option<Box<T>> {
+    pub fn pop(&mut self) -> Result<Option<Box<T>>, Status> {
         let mut buffer = self.buffer.lock().unwrap();
+
+        if buffer.is_empty() {
+            return Err(Status::Empty);
+        }
 
         while let Some(slot) = buffer.pop() {
             if slot.is_some() {
-                return slot;
+                return Ok(slot);
             }
         }
 
-        None
+        Err(Status::Abort)
     }
 
+    /// If the deque is empty, returns Empty. Otherwise,
+    /// returns the element successfully stolen from the top of
+    /// the deque, or returns Abort if this process loses a race
+    /// with another process to steal the topmost element
     pub fn steal(&mut self) -> Option<Box<T>> {
         let mut buffer = self.buffer.lock().unwrap();
+
+        if buffer.is_empty() {
+            return None;
+        }
 
         for slot in buffer.iter_mut().rev() {
             if slot.is_some() {
@@ -80,12 +97,12 @@ mod work_steal_schedule_test {
         let mut deque: WorkStealingDeque<TestTask> = WorkStealingDeque::new(10);
 
         deque.push(Box::new(TestTask(1)));
-        assert!(deque.pop().is_some());
+        assert!(deque.pop().is_ok());
 
         deque.push(Box::new(TestTask(2)));
-        assert!(deque.pop().is_some());
+        assert!(deque.pop().is_ok());
 
-        assert!(deque.pop().is_none());
+        assert!(deque.pop().is_err());
     }
     
     #[test]
